@@ -3,5 +3,4 @@ base = "dark"
 
 [server]
 headless = true
-enableCORS = false
-
+# Keep Streamlit's default CORS/XSRF behavior (Streamlit Cloud expects XSRF on).
