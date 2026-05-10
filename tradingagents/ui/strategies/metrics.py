@@ -273,3 +273,58 @@ def compute_fake_momentum(hist: pd.DataFrame, *, lookback: int = 20) -> FakeMome
         bull_trap_reasons=bull_reasons,
         bear_trap_reasons=bear_reasons,
     )
+
+
+@dataclass(frozen=True)
+class CryptoSummary:
+    ret_1d: float | None
+    ret_7d: float | None
+    ret_30d: float | None
+    vol_7d_annualized: float | None
+    volume_spike: float | None
+
+
+def compute_crypto_summary(hist: pd.DataFrame) -> CryptoSummary:
+    """
+    Crypto-oriented summary from OHLCV bars:
+    - 1D/7D/30D returns (where possible)
+    - 7D realized vol (annualized) from bar-to-bar returns
+    - volume spike = last volume / 20-bar avg volume
+    """
+    hist = hist.dropna()
+    if hist.empty or "Close" not in hist:
+        return CryptoSummary(None, None, None, None, None)
+
+    close = hist["Close"].astype(float)
+    last = float(close.iloc[-1])
+
+    def ret_n(n: int) -> float | None:
+        if len(close) <= n:
+            return None
+        prev = float(close.iloc[-(n + 1)])
+        return round(_pct(last, prev), 2)
+
+    # Realized vol: use last ~7 "days" worth of bars; for intraday this is approximate.
+    returns = close.pct_change().dropna()
+    vol_7d = None
+    if len(returns) >= 30:
+        window = returns.tail(7 * 24 if len(returns) > 7 * 24 else 50)
+        sigma = float(window.std())
+        # Annualize assuming 365 days and 24h sessions: a rough but stable heuristic.
+        vol_7d = round(sigma * (365**0.5) * 100.0, 2)
+
+    vol_spike = None
+    if "Volume" in hist and len(hist) >= 25:
+        vol = hist["Volume"].astype(float)
+        avg = float(vol.rolling(20).mean().iloc[-2])
+        lastv = float(vol.iloc[-1])
+        if avg > 0:
+            vol_spike = round(lastv / avg, 2)
+
+    return CryptoSummary(
+        ret_1d=ret_n(1),
+        ret_7d=ret_n(7),
+        ret_30d=ret_n(30),
+        vol_7d_annualized=vol_7d,
+        volume_spike=vol_spike,
+    )

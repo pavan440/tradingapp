@@ -23,6 +23,7 @@ from tradingagents.ui.strategies.scans import SCAN_STRATEGIES, run_scan
 from tradingagents.ui.strategies.metrics import (
     compute_atr14,
     compute_bull_bear_scores,
+    compute_crypto_summary,
     compute_day_trading_levels,
     compute_fake_momentum,
     compute_momentum_summary,
@@ -300,6 +301,14 @@ def _run_deep_dive_reasoning(
     stock = yf.Ticker(selected_ticker)
     final_prompt_context = ""
     hist_for_metrics = None
+    is_crypto = False
+    try:
+        info_probe = stock.info or {}
+        is_crypto = (info_probe.get("quoteType") == "CRYPTOCURRENCY") or (
+            str(info_probe.get("symbol") or "").endswith("-USD")
+        )
+    except Exception:
+        is_crypto = selected_ticker.endswith("-USD")
 
     if use_fund:
         try:
@@ -361,22 +370,24 @@ def _run_deep_dive_reasoning(
             day = compute_day_trading_levels(mom.last_close, atr14)
             bullbear = compute_bull_bear_scores(hist_for_metrics)
             fake = compute_fake_momentum(hist_for_metrics)
+            crypto = compute_crypto_summary(hist_for_metrics) if is_crypto else None
 
             # Options ratio (nearest expiry; uses OI)
             options_text = ""
-            try:
-                expirations = stock.options
-                if expirations:
-                    chain = stock.option_chain(expirations[0])
-                    call_oi = float(chain.calls["openInterest"].sum())
-                    put_oi = float(chain.puts["openInterest"].sum())
-                    pc_ratio = (put_oi / call_oi) if call_oi > 0 else None
-                    options_text = (
-                        f"Nearest expiry: {expirations[0]} | Call OI: {int(call_oi)} | Put OI: {int(put_oi)}"
-                        + (f" | Put/Call OI: {pc_ratio:.2f}" if pc_ratio is not None else "")
-                    )
-            except Exception:
-                options_text = ""
+            if not is_crypto:
+                try:
+                    expirations = stock.options
+                    if expirations:
+                        chain = stock.option_chain(expirations[0])
+                        call_oi = float(chain.calls["openInterest"].sum())
+                        put_oi = float(chain.puts["openInterest"].sum())
+                        pc_ratio = (put_oi / call_oi) if call_oi > 0 else None
+                        options_text = (
+                            f"Nearest expiry: {expirations[0]} | Call OI: {int(call_oi)} | Put OI: {int(put_oi)}"
+                            + (f" | Put/Call OI: {pc_ratio:.2f}" if pc_ratio is not None else "")
+                        )
+                except Exception:
+                    options_text = ""
 
             strategy_lines = [
                 f"Momentum returns: 5D={mom.ret_5d}%, 21D={mom.ret_21d}%, 63D={mom.ret_63d}%",
@@ -385,6 +396,10 @@ def _run_deep_dive_reasoning(
                 f"Bull score: {bullbear.bull_score} | Bear score: {bullbear.bear_score} | Notes: {', '.join(bullbear.notes[:6])}",
                 f"Fake momentum (trap risk): bull_trap={fake.bull_trap_score} ({', '.join(fake.bull_trap_reasons[:3]) or 'n/a'}), bear_trap={fake.bear_trap_score} ({', '.join(fake.bear_trap_reasons[:3]) or 'n/a'})",
             ]
+            if crypto is not None:
+                strategy_lines.append(
+                    f"Crypto summary: 1D={crypto.ret_1d}%, 7D={crypto.ret_7d}%, 30D={crypto.ret_30d}%, vol≈{crypto.vol_7d_annualized}%/yr, volume_spike={crypto.volume_spike}x"
+                )
             if day.atr14 is not None:
                 strategy_lines.append(
                     f"Day-trading levels (ATR14={day.atr14}): stop1R={day.stop_1r}, stop2R={day.stop_2r}, tp1R={day.takeprofit_1r}, tp2R={day.takeprofit_2r}"
