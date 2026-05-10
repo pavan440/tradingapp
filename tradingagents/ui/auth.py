@@ -301,7 +301,10 @@ def auth_ui():
                         status = "✅ Approved" if row['is_approved'] else "⏳ Pending"
                         col2.write(status)
                         
-                        last_login = row['last_login'][:19].replace('T', ' ') if row['last_login'] else 'Never'
+                        if pd.isna(row['last_login']) or not row['last_login']:
+                            last_login = 'Never'
+                        else:
+                            last_login = str(row['last_login'])[:19].replace('T', ' ')
                         col3.write(f"Last Login:\n{last_login}")
                         
                         if not row['is_admin']: # Prevent deleting other admins or self

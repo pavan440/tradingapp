@@ -46,6 +46,18 @@ SCAN_STRATEGIES: list[ScanStrategy] = [
         signal="Most Shorted",
         filters_dict={"Option/Short": "Optionable", "Market Cap.": "+Small (over $300mln)"},
     ),
+    ScanStrategy(
+        label="📉 Significant Drop Today (-5%)",
+        filters_dict={"Change": "Down 5%"},
+    ),
+    ScanStrategy(
+        label="📉 Significant Drop Today (-10%)",
+        filters_dict={"Change": "Down 10%"},
+    ),
+    ScanStrategy(
+        label="📉 Massive Drop Today (-20%)",
+        filters_dict={"Change": "Down 20%"},
+    ),
 ]
 
 
