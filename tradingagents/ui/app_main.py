@@ -240,23 +240,46 @@ def _render_market_scanner() -> None:
     use_tech = col_b.checkbox("Technicals (RSI & MA)", value=True)
     use_news = col_c.checkbox("Recent News Feed", value=True)
 
+    st.markdown("LLM settings (for the reasoning block):")
+    llm_col1, llm_col2 = st.columns(2)
+    llm_provider = llm_col1.selectbox(
+        "Provider",
+        ["openrouter", "nebius", "openai", "anthropic", "google"],
+        index=0,
+    )
+    default_models = {
+        "openrouter": "z-ai/glm-4.5-air:free",
+        "nebius": "meta-llama/Llama-3.3-70B-Instruct",
+        "openai": "gpt-5.4-mini",
+        "anthropic": "claude-3-5-sonnet-latest",
+        "google": "gemini-2.5-flash",
+    }
+    model_name = llm_col2.text_input("Model", value=default_models[llm_provider])
+
     st.markdown("Timeframe (stocks + crypto):")
     tf_col1, tf_col2 = st.columns(2)
     interval_label = tf_col1.selectbox(
         "Bar interval",
-        ["1 hour", "4 hours", "1 day"],
-        index=2,
+        ["15 min", "30 min", "1 hour", "2 hours", "4 hours", "1 day", "1 week"],
+        index=5,
     )
-    interval = {"1 hour": "60m", "4 hours": "60m", "1 day": "1d"}[interval_label]
-    period = tf_col2.selectbox(
-        "Lookback",
-        ["30 days", "90 days", "6 months", "2 years"],
-        index=2,
-    )
-    yf_period = {"30 days": "1mo", "90 days": "3mo", "6 months": "6mo", "2 years": "2y"}[period]
+    interval = {
+        "15 min": "15m",
+        "30 min": "30m",
+        "1 hour": "60m",
+        "2 hours": "60m",
+        "4 hours": "60m",
+        "1 day": "1d",
+        "1 week": "1wk",
+    }[interval_label]
+    lookback_options = _lookback_options_for_interval(interval_label)
+    period = tf_col2.selectbox("Lookback", lookback_options, index=min(2, len(lookback_options) - 1))
+    yf_period = _yf_period_from_label(period)
 
     if interval_label == "4 hours":
         st.caption("4h uses 60m data aggregated into 4-hour bars for broader compatibility.")
+    if interval_label == "2 hours":
+        st.caption("2h uses 60m data aggregated into 2-hour bars for broader compatibility.")
 
     if st.button(f"🧠 Run Tools & Generate AI Reasoning for {selected_ticker}", type="primary"):
         _run_deep_dive_reasoning(
@@ -266,7 +289,9 @@ def _render_market_scanner() -> None:
             use_news=use_news,
             interval=interval,
             period=yf_period,
-            aggregate_4h=(interval_label == "4 hours"),
+            aggregate_bars=(4 if interval_label == "4 hours" else (2 if interval_label == "2 hours" else 1)),
+            llm_provider=llm_provider,
+            llm_model=model_name,
         )
 
     st.markdown("### Strategy Modules")
@@ -294,7 +319,9 @@ def _run_deep_dive_reasoning(
     use_news: bool,
     interval: str,
     period: str,
-    aggregate_4h: bool,
+    aggregate_bars: int,
+    llm_provider: str,
+    llm_model: str,
 ) -> None:
     import yfinance as yf
 
@@ -334,8 +361,8 @@ def _run_deep_dive_reasoning(
     if use_tech:
         try:
             hist = stock.history(period=period, interval=interval).dropna()
-            if aggregate_4h and not hist.empty:
-                hist = _aggregate_ohlcv(hist, bars=4)
+            if aggregate_bars > 1 and not hist.empty:
+                hist = _aggregate_ohlcv(hist, bars=aggregate_bars)
             hist_for_metrics = hist
             if not hist.empty:
                 closes = hist["Close"]
@@ -361,8 +388,8 @@ def _run_deep_dive_reasoning(
     try:
         if hist_for_metrics is None:
             hist_for_metrics = stock.history(period=period, interval=interval).dropna()
-            if aggregate_4h and not hist_for_metrics.empty:
-                hist_for_metrics = _aggregate_ohlcv(hist_for_metrics, bars=4)
+            if aggregate_bars > 1 and not hist_for_metrics.empty:
+                hist_for_metrics = _aggregate_ohlcv(hist_for_metrics, bars=aggregate_bars)
         if hist_for_metrics is not None and not hist_for_metrics.empty:
             mom = compute_momentum_summary(hist_for_metrics)
             recent_rets = compute_recent_returns(hist_for_metrics, bars=8)
@@ -444,7 +471,11 @@ Keep your response to 3-4 punchy sentences, plus the final verdict. Format in Ma
 """
 
     try:
-        client = create_llm_client("nebius", "meta-llama/Llama-3.3-70B-Instruct")
+        if not _has_llm_credentials(llm_provider):
+            st.error(_missing_credentials_message(llm_provider))
+            return
+
+        client = create_llm_client(llm_provider, llm_model)
         llm = client.get_llm()
         res = llm.invoke(prompt)
         ai_reasoning = res.content
@@ -477,6 +508,63 @@ def _aggregate_ohlcv(hist, *, bars: int):
     out = df.groupby("__grp", as_index=False).agg(agg)
     # Keep a monotonic index for downstream rolling windows.
     return out
+
+
+def _lookback_options_for_interval(interval_label: str) -> list[str]:
+    # Keep within yfinance typical intraday limits.
+    if interval_label in {"15 min", "30 min"}:
+        return ["7 days", "30 days", "60 days"]
+    if interval_label in {"1 hour", "2 hours", "4 hours"}:
+        return ["30 days", "90 days", "6 months", "1 year", "2 years"]
+    if interval_label == "1 day":
+        return ["30 days", "90 days", "6 months", "1 year", "2 years", "5 years", "Max"]
+    return ["6 months", "1 year", "2 years", "5 years", "Max"]
+
+
+def _yf_period_from_label(label: str) -> str:
+    return {
+        "7 days": "7d",
+        "30 days": "1mo",
+        "60 days": "60d",
+        "90 days": "3mo",
+        "6 months": "6mo",
+        "1 year": "1y",
+        "2 years": "2y",
+        "5 years": "5y",
+        "Max": "max",
+    }[label]
+
+
+def _has_llm_credentials(provider: str) -> bool:
+    import os
+
+    p = provider.lower()
+    if p == "openai":
+        return bool(os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_ADMIN_KEY") or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None))
+    if p == "anthropic":
+        return bool(os.getenv("ANTHROPIC_API_KEY") or (st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None))
+    if p == "google":
+        return bool(os.getenv("GOOGLE_API_KEY") or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") else None))
+    if p == "openrouter":
+        return bool(os.getenv("OPENROUTER_API_KEY") or (st.secrets.get("OPENROUTER_API_KEY") if hasattr(st, "secrets") else None))
+    if p == "nebius":
+        return bool(os.getenv("NEBIUS_API_KEY") or (st.secrets.get("NEBIUS_API_KEY") if hasattr(st, "secrets") else None))
+    return True
+
+
+def _missing_credentials_message(provider: str) -> str:
+    p = provider.lower()
+    key = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "nebius": "NEBIUS_API_KEY",
+    }.get(p, "API_KEY")
+    return (
+        f"Missing credentials for provider '{provider}'. Add `{key}` in Streamlit Community Cloud -> App -> Settings -> Secrets "
+        f"(or set it as an environment variable)."
+    )
 
 
 def _render_momentum_breakout_beta(ticker: str) -> None:
