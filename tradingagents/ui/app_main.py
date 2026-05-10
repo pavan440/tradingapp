@@ -460,9 +460,14 @@ def _run_deep_dive_reasoning(
             news = stock.news or []
             lines = []
             for item in news[:6]:
-                title = item.get("title") or ""
-                publisher = item.get("publisher") or ""
-                lines.append(f"- {title} ({publisher})")
+                title = (item.get("title") or "").strip()
+                if not title:
+                    continue
+                publisher = (item.get("publisher") or "").strip()
+                if publisher:
+                    lines.append(f"- {title} ({publisher})")
+                else:
+                    lines.append(f"- {title}")
             news_text = "\n".join(lines).strip() or "No recent news."
 
             st.markdown("#### 📰 News Tool Output")
