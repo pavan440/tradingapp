@@ -20,6 +20,12 @@ from tradingagents.ui.data import (
 )
 from tradingagents.ui.streamlit_utils import StreamlitRedirect, check_dataframe_click
 from tradingagents.ui.strategies.scans import SCAN_STRATEGIES, run_scan
+from tradingagents.ui.strategies.metrics import (
+    compute_atr14,
+    compute_bull_bear_scores,
+    compute_day_trading_levels,
+    compute_momentum_summary,
+)
 
 
 def main() -> None:
@@ -256,6 +262,7 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
 
     stock = yf.Ticker(selected_ticker)
     final_prompt_context = ""
+    hist_for_metrics = None
 
     if use_fund:
         try:
@@ -281,6 +288,7 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
     if use_tech:
         try:
             hist = stock.history(period="6mo", interval="1d").dropna()
+            hist_for_metrics = hist
             if not hist.empty:
                 closes = hist["Close"]
                 delta = closes.diff()
@@ -300,6 +308,51 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
                 final_prompt_context += f"TECHNICALS:\n{tech_text}\n\n"
         except Exception as e:
             st.warning(f"Technicals tool failed: {e}")
+
+    # Strategy calculators (momentum/day-trading/options ratios) -> feed into reasoning
+    try:
+        if hist_for_metrics is None:
+            hist_for_metrics = stock.history(period="6mo", interval="1d").dropna()
+        if hist_for_metrics is not None and not hist_for_metrics.empty:
+            mom = compute_momentum_summary(hist_for_metrics)
+            atr14 = compute_atr14(hist_for_metrics)
+            day = compute_day_trading_levels(mom.last_close, atr14)
+            bullbear = compute_bull_bear_scores(hist_for_metrics)
+
+            # Options ratio (nearest expiry; uses OI)
+            options_text = ""
+            try:
+                expirations = stock.options
+                if expirations:
+                    chain = stock.option_chain(expirations[0])
+                    call_oi = float(chain.calls["openInterest"].sum())
+                    put_oi = float(chain.puts["openInterest"].sum())
+                    pc_ratio = (put_oi / call_oi) if call_oi > 0 else None
+                    options_text = (
+                        f"Nearest expiry: {expirations[0]} | Call OI: {int(call_oi)} | Put OI: {int(put_oi)}"
+                        + (f" | Put/Call OI: {pc_ratio:.2f}" if pc_ratio is not None else "")
+                    )
+            except Exception:
+                options_text = ""
+
+            strategy_lines = [
+                f"Momentum returns: 5D={mom.ret_5d}%, 21D={mom.ret_21d}%, 63D={mom.ret_63d}%",
+                f"20D high: {mom.high_20d} | Above 20D high: {mom.above_20d_high}",
+                f"Bull score: {bullbear.bull_score} | Bear score: {bullbear.bear_score} | Notes: {', '.join(bullbear.notes[:6])}",
+            ]
+            if day.atr14 is not None:
+                strategy_lines.append(
+                    f"Day-trading levels (ATR14={day.atr14}): stop1R={day.stop_1r}, stop2R={day.stop_2r}, tp1R={day.takeprofit_1r}, tp2R={day.takeprofit_2r}"
+                )
+            if options_text:
+                strategy_lines.append(f"Options OI ratio: {options_text}")
+
+            strategy_text = "\n".join(f"- {l}" for l in strategy_lines if l)
+            st.markdown("#### 🧮 Strategy & Risk Calculators")
+            st.info(strategy_text)
+            final_prompt_context += f"STRATEGY_CALCULATORS:\n{strategy_text}\n\n"
+    except Exception as e:
+        st.warning(f"Strategy calculators failed: {e}")
 
     if use_news:
         try:
@@ -512,4 +565,3 @@ def _render_agent_execution() -> None:
         with tabs[4]:
             st.markdown("### Execution Logs")
             st.code(redirector.content, language="text")
-
