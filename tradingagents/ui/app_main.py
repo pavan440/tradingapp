@@ -272,9 +272,23 @@ def _render_market_scanner() -> None:
         "1 day": "1d",
         "1 week": "1wk",
     }[interval_label]
-    lookback_options = _lookback_options_for_interval(interval_label)
-    period = tf_col2.selectbox("Lookback", lookback_options, index=min(2, len(lookback_options) - 1))
-    yf_period = _yf_period_from_label(period)
+    lookback_mode = tf_col2.radio("Lookback mode", ["Presets", "Custom days"], horizontal=True)
+    if lookback_mode == "Presets":
+        lookback_options = _lookback_options_for_interval(interval_label)
+        period = tf_col2.selectbox("Lookback", lookback_options, index=min(2, len(lookback_options) - 1))
+        yf_period = _yf_period_from_label(period)
+    else:
+        max_days = _max_days_for_interval(interval_label)
+        days = int(
+            tf_col2.number_input(
+                "Lookback (days)",
+                min_value=2,
+                max_value=max_days,
+                value=min(20, max_days),
+                step=1,
+            )
+        )
+        yf_period = f"{days}d"
 
     if interval_label == "4 hours":
         st.caption("4h uses 60m data aggregated into 4-hour bars for broader compatibility.")
@@ -533,6 +547,17 @@ def _yf_period_from_label(label: str) -> str:
         "5 years": "5y",
         "Max": "max",
     }[label]
+
+
+def _max_days_for_interval(interval_label: str) -> int:
+    # Conservative caps to avoid yfinance intraday history failures.
+    if interval_label in {"15 min", "30 min"}:
+        return 60
+    if interval_label in {"1 hour", "2 hours", "4 hours"}:
+        return 730  # ~2y
+    if interval_label == "1 day":
+        return 3650  # ~10y
+    return 3650
 
 
 def _has_llm_credentials(provider: str) -> bool:
