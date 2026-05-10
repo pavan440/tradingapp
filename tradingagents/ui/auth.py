@@ -152,6 +152,25 @@ def create_user(username, email, password, is_admin=False):
         return True, "Sign up successful! Please wait for an admin to approve your account.", email_msg
 
 def check_login(username, password):
+    # Check if logging in as Master Admin via Streamlit Secrets / .env
+    admin_user = None
+    admin_pass = None
+    try:
+        if hasattr(st, "secrets"):
+            admin_user = st.secrets.get("ADMIN_USERNAME")
+            admin_pass = st.secrets.get("ADMIN_PASSWORD")
+    except Exception:
+        pass
+        
+    if not admin_user:
+        admin_user = os.environ.get("ADMIN_USERNAME")
+    if not admin_pass:
+        admin_pass = os.environ.get("ADMIN_PASSWORD")
+        
+    if admin_user and admin_pass and username == admin_user and password == admin_pass:
+        return True, "Master Admin Login Successful", True
+
+    # Otherwise, check regular users in the database
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT password_hash, salt, is_admin, is_approved FROM users WHERE username=?", (username,))
