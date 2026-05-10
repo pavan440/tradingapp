@@ -79,6 +79,44 @@ def send_admin_notification(new_username, new_email, is_super_user=False):
     except Exception as e:
         return False, f"Failed to send email notification: {e}"
 
+def send_user_status_notification(user_email, username, status="welcome"):
+    gmail_user = None
+    gmail_password = None
+    
+    try:
+        if hasattr(st, "secrets"):
+            gmail_user = st.secrets.get("GMAIL_USER")
+            gmail_password = st.secrets.get("GMAIL_APP_PASSWORD")
+    except Exception:
+        pass
+        
+    if not gmail_user:
+        gmail_user = os.environ.get("GMAIL_USER")
+    if not gmail_password:
+        gmail_password = os.environ.get("GMAIL_APP_PASSWORD")
+    
+    if not gmail_user or not gmail_password or not user_email:
+        return
+        
+    try:
+        msg = EmailMessage()
+        if status == "welcome":
+            msg.set_content(f"Hello {username},\n\nWe have received your request to join TradingAgents!\n\nYour account is currently pending approval from the administrator. We will notify you again once you have been approved.\n\nThank you!")
+            msg['Subject'] = "Welcome to TradingAgents - Approval Pending"
+        elif status == "approved":
+            msg.set_content(f"Hello {username},\n\nGreat news! Your account has been approved by the administrator.\n\nYou can now log in to TradingAgents and access the dashboard.\n\nEnjoy!")
+            msg['Subject'] = "Your TradingAgents Account is Approved!"
+            
+        msg['From'] = gmail_user
+        msg['To'] = user_email
+        
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(gmail_user, gmail_password)
+        server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        pass
+
 def hash_password(password, salt):
     return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000).hex()
 
@@ -103,6 +141,10 @@ def create_user(username, email, password, is_admin=False):
     conn.close()
     
     email_success, email_msg = send_admin_notification(username, email, is_super_user=is_admin)
+    
+    if not is_admin:
+        # Also notify the user that their request was received
+        send_user_status_notification(email, username, status="welcome")
     
     if is_admin:
         return True, "Super User successfully created!", email_msg
@@ -145,6 +187,14 @@ def toggle_approval(username, current_status):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("UPDATE users SET is_approved=? WHERE username=?", (not current_status, username))
+    
+    # If they are being approved (False -> True), send them an email
+    if not current_status:
+        c.execute("SELECT email FROM users WHERE username=?", (username,))
+        row = c.fetchone()
+        if row and row[0]:
+            send_user_status_notification(row[0], username, status="approved")
+            
     conn.commit()
     conn.close()
 
