@@ -213,6 +213,13 @@ def _render_market_scanner() -> None:
         try:
             info = get_stock_info(selected_ticker)
             st.markdown(f"**Quick Fundamental & Technical Snapshot for {selected_ticker}**")
+            
+            # Sector and Industry
+            sector = info.get('sector', 'N/A')
+            industry = info.get('industry', 'N/A')
+            if sector != 'N/A' or industry != 'N/A':
+                st.markdown(f"**Sector:** {sector} | **Industry:** {industry}")
+                
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Current Price", f"${info.get('currentPrice', 'N/A')}")
             market_cap = info.get("marketCap", 0) or 0
@@ -314,14 +321,17 @@ def _render_market_scanner() -> None:
             "🔮 Comprehensive Multi-Agent (Standard)",
             "📈 Momentum Breakout Engine (Beta)",
             "⚡ VWAP Reversion (Beta)",
+            "📉 Potential Reversal Engine (Beta)",
         ],
     )
     if strategy_module.startswith("🔮"):
         st.info("Use the **🤖 Agent Execution** tab to run the full multi-agent report.")
     elif strategy_module.startswith("📈"):
         _render_momentum_breakout_beta(selected_ticker)
-    else:
+    elif strategy_module.startswith("⚡"):
         _render_vwap_reversion_beta(selected_ticker)
+    else:
+        _render_reversal_strategy_beta(selected_ticker)
 
 
 def _run_deep_dive_reasoning(
@@ -456,24 +466,27 @@ def _run_deep_dive_reasoning(
 
     if use_news:
         try:
-            news = stock.news or []
+            import urllib.request
+            import xml.etree.ElementTree as ET
+            
+            url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={selected_ticker}&region=US&lang=en-US"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            xml_data = urllib.request.urlopen(req, timeout=5).read()
+            root = ET.fromstring(xml_data)
+            
             lines = []
-            for item in news[:6]:
-                title = (item.get("title") or "").strip()
-                if not title:
-                    continue
-                publisher = (item.get("publisher") or "").strip()
-                if publisher:
-                    lines.append(f"- {title} ({publisher})")
-                else:
+            for item in root.findall('.//item')[:6]:
+                title = item.find('title').text if item.find('title') is not None else ""
+                if title:
                     lines.append(f"- {title}")
+                    
             news_text = "\n".join(lines).strip() or "No recent news."
 
             st.markdown("#### 📰 News Tool Output")
             st.info(news_text)
             final_prompt_context += f"RECENT NEWS:\n{news_text}\n\n"
-        except Exception:
-            st.warning("News feed temporarily unavailable.")
+        except Exception as e:
+            st.warning(f"News feed temporarily unavailable: {e}")
 
     if not final_prompt_context:
         st.warning("No tools were selected for the AI to reason over!")
@@ -766,3 +779,55 @@ def _render_agent_execution() -> None:
         with tabs[4]:
             st.markdown("### Execution Logs")
             st.code(redirector.content, language="text")
+
+def _render_reversal_strategy_beta(ticker: str) -> None:
+    import yfinance as yf
+
+    st.caption("Beta: RSI extremes + MACD Crossover for potential trend reversal detection.")
+    try:
+        hist = yf.Ticker(ticker).history(period="3mo", interval="1d").dropna()
+        if hist.empty:
+            st.warning("No price history available.")
+            return
+        
+        close = hist["Close"]
+        
+        # RSI 14
+        delta = close.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = gain / loss.replace(0, 1e-9)
+        rsi = 100 - (100 / (1 + rs))
+        last_rsi = float(rsi.iloc[-1])
+        
+        # MACD (12, 26, 9)
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        signal = macd.ewm(span=9, adjust=False).mean()
+        hist_macd = macd - signal
+        
+        macd_crossover_bull = float(hist_macd.iloc[-2]) < 0 and float(hist_macd.iloc[-1]) > 0
+        macd_crossover_bear = float(hist_macd.iloc[-2]) > 0 and float(hist_macd.iloc[-1]) < 0
+        
+        st.write({
+            "Current RSI (14)": round(last_rsi, 2),
+            "Oversold (<30)": "Yes" if last_rsi < 30 else "No",
+            "Overbought (>70)": "Yes" if last_rsi > 70 else "No",
+            "MACD Bull Crossover": "Yes" if macd_crossover_bull else "No",
+            "MACD Bear Crossover": "Yes" if macd_crossover_bear else "No",
+        })
+        
+        if last_rsi < 35 and macd_crossover_bull:
+            st.success("🔥 Bullish Reversal Detected: Price is oversold and MACD is crossing up.")
+        elif last_rsi > 65 and macd_crossover_bear:
+            st.error("🩸 Bearish Reversal Detected: Price is overbought and MACD is crossing down.")
+        elif last_rsi < 30:
+            st.info("Stock is oversold. Watch for a bullish MACD crossover to confirm reversal.")
+        elif last_rsi > 70:
+            st.warning("Stock is overbought. Watch for a bearish MACD crossover to confirm reversal.")
+        else:
+            st.write("No extreme reversal signals at the moment. Trend is normal.")
+            
+    except Exception as e:
+        st.warning(f"Reversal module failed: {e}")
