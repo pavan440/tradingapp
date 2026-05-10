@@ -48,6 +48,15 @@ def compute_momentum_summary(hist: pd.DataFrame) -> MomentumSummary:
     )
 
 
+def compute_recent_returns(hist: pd.DataFrame, *, bars: int = 8) -> list[float]:
+    hist = hist.dropna()
+    if hist.empty or "Close" not in hist or len(hist) < 3:
+        return []
+    close = hist["Close"].astype(float)
+    rets = close.pct_change().dropna().tail(bars) * 100.0
+    return [round(float(x), 2) for x in rets.tolist()]
+
+
 @dataclass(frozen=True)
 class DayTradingSummary:
     atr14: float | None
@@ -165,3 +174,102 @@ def compute_bull_bear_scores(hist: pd.DataFrame) -> BullBearSummary:
             notes.append(f"RSI {rsi_val:.1f} (neutral)")
 
     return BullBearSummary(bull_score=bull, bear_score=bear, notes=notes)
+
+
+@dataclass(frozen=True)
+class FakeMomentumSummary:
+    bull_trap_score: int
+    bear_trap_score: int
+    bull_trap_reasons: list[str]
+    bear_trap_reasons: list[str]
+
+
+def compute_fake_momentum(hist: pd.DataFrame, *, lookback: int = 20) -> FakeMomentumSummary:
+    """
+    Detect likely "fake momentum" (bull/bear traps) using only OHLCV.
+
+    Heuristics (each adds 1 point):
+    - Breakout/breakdown vs lookback high/low without volume confirmation
+    - Failed breakout/breakdown (close back inside range)
+    - Wick rejection (upper wick for bull trap, lower wick for bear trap)
+    - RSI divergence proxy (RSI extreme + turning)
+    """
+    hist = hist.dropna()
+    if hist.empty or not {"Open", "High", "Low", "Close"}.issubset(hist.columns):
+        return FakeMomentumSummary(0, 0, ["No history"], ["No history"])
+
+    close = hist["Close"].astype(float)
+    high = hist["High"].astype(float)
+    low = hist["Low"].astype(float)
+    open_ = hist["Open"].astype(float)
+    volume = hist["Volume"].astype(float) if "Volume" in hist else None
+
+    if len(hist) < lookback + 3:
+        return FakeMomentumSummary(0, 0, ["Insufficient bars"], ["Insufficient bars"])
+
+    last_close = float(close.iloc[-1])
+    last_open = float(open_.iloc[-1])
+    last_high = float(high.iloc[-1])
+    last_low = float(low.iloc[-1])
+    last_vol = float(volume.iloc[-1]) if volume is not None and pd.notna(volume.iloc[-1]) else None
+    avg_vol = float(volume.rolling(lookback).mean().iloc[-2]) if volume is not None else None
+
+    range_high = float(high.rolling(lookback).max().iloc[-2])
+    range_low = float(low.rolling(lookback).min().iloc[-2])
+
+    bull_score = 0
+    bear_score = 0
+    bull_reasons: list[str] = []
+    bear_reasons: list[str] = []
+
+    # Breakout / breakdown without volume
+    if last_close > range_high:
+        if avg_vol and last_vol is not None and last_vol < 1.2 * avg_vol:
+            bull_score += 1
+            bull_reasons.append("Breakout without volume confirmation")
+    if last_close < range_low:
+        if avg_vol and last_vol is not None and last_vol < 1.2 * avg_vol:
+            bear_score += 1
+            bear_reasons.append("Breakdown without volume confirmation")
+
+    # Failed breakout/breakdown: intrabar excursion but close back inside
+    if last_high > range_high and last_close <= range_high:
+        bull_score += 1
+        bull_reasons.append("Failed breakout (high > range, close back inside)")
+    if last_low < range_low and last_close >= range_low:
+        bear_score += 1
+        bear_reasons.append("Failed breakdown (low < range, close back inside)")
+
+    # Wick rejection
+    candle_range = max(last_high - last_low, 1e-9)
+    upper_wick = last_high - max(last_open, last_close)
+    lower_wick = min(last_open, last_close) - last_low
+    if upper_wick / candle_range >= 0.45 and last_close < last_open:
+        bull_score += 1
+        bull_reasons.append("Upper-wick rejection (bull trap risk)")
+    if lower_wick / candle_range >= 0.45 and last_close > last_open:
+        bear_score += 1
+        bear_reasons.append("Lower-wick rejection (bear trap risk)")
+
+    # RSI extreme + turning (very lightweight divergence proxy)
+    if len(close) >= 30:
+        delta = close.diff()
+        gain = delta.clip(lower=0).rolling(14).mean()
+        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        rs = gain / loss.replace(0, 1e-9)
+        rsi = 100 - (100 / (1 + rs))
+        rsi_last = float(rsi.iloc[-1])
+        rsi_prev = float(rsi.iloc[-2])
+        if rsi_last >= 70 and rsi_last < rsi_prev:
+            bull_score += 1
+            bull_reasons.append("RSI rolling over from overbought")
+        if rsi_last <= 30 and rsi_last > rsi_prev:
+            bear_score += 1
+            bear_reasons.append("RSI bouncing from oversold")
+
+    return FakeMomentumSummary(
+        bull_trap_score=bull_score,
+        bear_trap_score=bear_score,
+        bull_trap_reasons=bull_reasons,
+        bear_trap_reasons=bear_reasons,
+    )

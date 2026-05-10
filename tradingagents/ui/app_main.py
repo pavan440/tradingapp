@@ -24,7 +24,9 @@ from tradingagents.ui.strategies.metrics import (
     compute_atr14,
     compute_bull_bear_scores,
     compute_day_trading_levels,
+    compute_fake_momentum,
     compute_momentum_summary,
+    compute_recent_returns,
 )
 
 
@@ -234,11 +236,37 @@ def _render_market_scanner() -> None:
     st.markdown("Select which tool outputs to generate and feed into the AI for reasoning:")
     col_a, col_b, col_c = st.columns(3)
     use_fund = col_a.checkbox("Fundamentals & Intrinsic Value", value=True)
-    use_tech = col_b.checkbox("Technicals (Daily RSI & MA)", value=True)
+    use_tech = col_b.checkbox("Technicals (RSI & MA)", value=True)
     use_news = col_c.checkbox("Recent News Feed", value=True)
 
+    st.markdown("Timeframe (stocks + crypto):")
+    tf_col1, tf_col2 = st.columns(2)
+    interval_label = tf_col1.selectbox(
+        "Bar interval",
+        ["1 hour", "4 hours", "1 day"],
+        index=2,
+    )
+    interval = {"1 hour": "60m", "4 hours": "60m", "1 day": "1d"}[interval_label]
+    period = tf_col2.selectbox(
+        "Lookback",
+        ["30 days", "90 days", "6 months", "2 years"],
+        index=2,
+    )
+    yf_period = {"30 days": "1mo", "90 days": "3mo", "6 months": "6mo", "2 years": "2y"}[period]
+
+    if interval_label == "4 hours":
+        st.caption("4h uses 60m data aggregated into 4-hour bars for broader compatibility.")
+
     if st.button(f"🧠 Run Tools & Generate AI Reasoning for {selected_ticker}", type="primary"):
-        _run_deep_dive_reasoning(selected_ticker, use_fund=use_fund, use_tech=use_tech, use_news=use_news)
+        _run_deep_dive_reasoning(
+            selected_ticker,
+            use_fund=use_fund,
+            use_tech=use_tech,
+            use_news=use_news,
+            interval=interval,
+            period=yf_period,
+            aggregate_4h=(interval_label == "4 hours"),
+        )
 
     st.markdown("### Strategy Modules")
     strategy_module = st.radio(
@@ -257,7 +285,16 @@ def _render_market_scanner() -> None:
         _render_vwap_reversion_beta(selected_ticker)
 
 
-def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: bool, use_news: bool) -> None:
+def _run_deep_dive_reasoning(
+    selected_ticker: str,
+    *,
+    use_fund: bool,
+    use_tech: bool,
+    use_news: bool,
+    interval: str,
+    period: str,
+    aggregate_4h: bool,
+) -> None:
     import yfinance as yf
 
     stock = yf.Ticker(selected_ticker)
@@ -287,7 +324,9 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
 
     if use_tech:
         try:
-            hist = stock.history(period="6mo", interval="1d").dropna()
+            hist = stock.history(period=period, interval=interval).dropna()
+            if aggregate_4h and not hist.empty:
+                hist = _aggregate_ohlcv(hist, bars=4)
             hist_for_metrics = hist
             if not hist.empty:
                 closes = hist["Close"]
@@ -309,15 +348,19 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
         except Exception as e:
             st.warning(f"Technicals tool failed: {e}")
 
-    # Strategy calculators (momentum/day-trading/options ratios) -> feed into reasoning
+    # Strategy calculators (momentum/day-trading/options ratios/fake momentum) -> feed into reasoning
     try:
         if hist_for_metrics is None:
-            hist_for_metrics = stock.history(period="6mo", interval="1d").dropna()
+            hist_for_metrics = stock.history(period=period, interval=interval).dropna()
+            if aggregate_4h and not hist_for_metrics.empty:
+                hist_for_metrics = _aggregate_ohlcv(hist_for_metrics, bars=4)
         if hist_for_metrics is not None and not hist_for_metrics.empty:
             mom = compute_momentum_summary(hist_for_metrics)
+            recent_rets = compute_recent_returns(hist_for_metrics, bars=8)
             atr14 = compute_atr14(hist_for_metrics)
             day = compute_day_trading_levels(mom.last_close, atr14)
             bullbear = compute_bull_bear_scores(hist_for_metrics)
+            fake = compute_fake_momentum(hist_for_metrics)
 
             # Options ratio (nearest expiry; uses OI)
             options_text = ""
@@ -337,8 +380,10 @@ def _run_deep_dive_reasoning(selected_ticker: str, *, use_fund: bool, use_tech: 
 
             strategy_lines = [
                 f"Momentum returns: 5D={mom.ret_5d}%, 21D={mom.ret_21d}%, 63D={mom.ret_63d}%",
+                f"Recent bar returns (%): {recent_rets}" if recent_rets else "",
                 f"20D high: {mom.high_20d} | Above 20D high: {mom.above_20d_high}",
                 f"Bull score: {bullbear.bull_score} | Bear score: {bullbear.bear_score} | Notes: {', '.join(bullbear.notes[:6])}",
+                f"Fake momentum (trap risk): bull_trap={fake.bull_trap_score} ({', '.join(fake.bull_trap_reasons[:3]) or 'n/a'}), bear_trap={fake.bear_trap_score} ({', '.join(fake.bear_trap_reasons[:3]) or 'n/a'})",
             ]
             if day.atr14 is not None:
                 strategy_lines.append(
@@ -393,6 +438,30 @@ Keep your response to 3-4 punchy sentences, plus the final verdict. Format in Ma
 
     st.markdown("#### 🧠 Final Integrated AI Reasoning")
     st.success(ai_reasoning)
+
+
+def _aggregate_ohlcv(hist, *, bars: int):
+    """
+    Aggregate fixed-size bar groups (e.g. 60m -> 4h). Works with yfinance DataFrame.
+    """
+    import pandas as pd
+
+    if hist is None or hist.empty:
+        return hist
+    df = hist.copy()
+    df = df.reset_index(drop=False)
+    df["__grp"] = (df.index // bars).astype(int)
+    agg = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+    }
+    if "Volume" in df.columns:
+        agg["Volume"] = "sum"
+    out = df.groupby("__grp", as_index=False).agg(agg)
+    # Keep a monotonic index for downstream rolling windows.
+    return out
 
 
 def _render_momentum_breakout_beta(ticker: str) -> None:
