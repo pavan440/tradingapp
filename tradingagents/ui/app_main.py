@@ -32,7 +32,6 @@ from tradingagents.ui.strategies.metrics import (
 
 
 def main() -> None:
-    st.set_page_config(page_title="TradingAgents AI", page_icon="📈", layout="wide")
     load_dotenv(override=True)
 
     page = st.sidebar.radio("Navigation", ["🔍 Market Scanner", "🤖 Agent Execution"])
