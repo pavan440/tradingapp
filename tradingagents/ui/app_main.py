@@ -353,7 +353,7 @@ def _run_deep_dive_reasoning(
 
     if use_fund:
         try:
-            info = stock.info
+            info = stock.info or {}
             eps = info.get("trailingEps", 0) or 0
             bvps = info.get("bookValue", 0) or 0
             analyst_target = info.get("targetMeanPrice", 0) or 0
