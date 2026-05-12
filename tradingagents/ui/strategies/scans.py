@@ -30,11 +30,25 @@ SCAN_STRATEGIES: list[ScanStrategy] = [
         signal="Top Losers",
         filters_dict={"Option/Short": "Optionable", "Relative Volume": "Over 2"},
     ),
-    ScanStrategy(label="Earnings Today", filters_dict={"Earnings Date": "Today"}),
-    ScanStrategy(label="Earnings Tomorrow", filters_dict={"Earnings Date": "Tomorrow"}),
     ScanStrategy(
-        label="Earnings This Week (Small+)",
-        filters_dict={"Earnings Date": "This Week", "Market Cap.": "+Small (over $300mln)"},
+        label="📅 Earnings This Week (Penny/Micro Cap)",
+        filters_dict={"Earnings Date": "This Week", "Market Cap.": "Micro (under $300mln)"},
+        limit=1000
+    ),
+    ScanStrategy(
+        label="📅 Earnings This Week (Small Cap)",
+        filters_dict={"Earnings Date": "This Week", "Market Cap.": "Small ($300mln to $2bln)"},
+        limit=1000
+    ),
+    ScanStrategy(
+        label="📅 Earnings This Week (Mid Cap)",
+        filters_dict={"Earnings Date": "This Week", "Market Cap.": "Mid ($2bln to $10bln)"},
+        limit=1000
+    ),
+    ScanStrategy(
+        label="📅 Earnings This Week (Large/Mega Cap)",
+        filters_dict={"Earnings Date": "This Week", "Market Cap.": "+Large (over $10bln)"},
+        limit=1000
     ),
     ScanStrategy(
         label="Relative Strength Leaders (S&P 500, Unusual Volume)",
