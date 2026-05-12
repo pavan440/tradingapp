@@ -30,6 +30,16 @@ def init_db():
         )
     ''')
     
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS saved_scanners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            scanner_name TEXT,
+            filters_json TEXT,
+            created_at TEXT
+        )
+    ''')
+    
     try:
         c.execute("ALTER TABLE users ADD COLUMN email TEXT")
     except sqlite3.OperationalError:
@@ -37,6 +47,34 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+def save_custom_scanner(username, scanner_name, filters_dict):
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    c.execute("INSERT INTO saved_scanners (username, scanner_name, filters_json, created_at) VALUES (?, ?, ?, ?)", 
+              (username, scanner_name, json.dumps(filters_dict), now))
+    conn.commit()
+    conn.close()
+
+def get_custom_scanners(username):
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, scanner_name, filters_json, created_at FROM saved_scanners WHERE username=?", (username,))
+    rows = c.fetchall()
+    conn.close()
+    
+    scanners = []
+    for row in rows:
+        scanners.append({
+            "id": row[0],
+            "name": row[1],
+            "filters": json.loads(row[2]),
+            "created_at": row[3]
+        })
+    return scanners
 
 def send_admin_notification(new_username, new_email, is_super_user=False):
     gmail_user = None

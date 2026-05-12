@@ -198,6 +198,85 @@ def _render_market_scanner() -> None:
                 _run_agentic_earnings_analysis(st.session_state["scanned_df"], llm_provider_earn)
 
     st.markdown("---")
+    st.subheader("🛠️ Custom Screener Builder & Profile")
+    st.markdown("Combine multiple filters dynamically, run them, and save them to your database profile!")
+    
+    tab_build, tab_saved = st.tabs(["⚙️ Build Screener", "📁 My Saved Screeners"])
+    
+    with tab_build:
+        c1, c2, c3 = st.columns(3)
+        mc = c1.selectbox("Market Cap", ["Any", "Mega (over $200bln)", "Large ($10bln to $200bln)", "Mid ($2bln to $10bln)", "Small ($300mln to $2bln)", "Micro (under $300mln)", "Nano (under $50mln)"])
+        price = c2.selectbox("Price", ["Any", "Under $5", "Under $10", "Under $20", "Over $20", "Over $50"])
+        avg_vol = c3.selectbox("Average Volume", ["Any", "Over 100K", "Over 500K", "Over 1M", "Over 2M", "Over 5M", "Over 10M"])
+        
+        c4, c5, c6 = st.columns(3)
+        exch = c4.selectbox("Exchange", ["Any", "AMEX", "NASDAQ", "NYSE"])
+        sec = c5.selectbox("Sector", ["Any", "Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"])
+        change = c6.selectbox("Performance (Change)", ["Any", "Down 5%", "Down 10%", "Down 15%", "Down 20%", "Up 5%", "Up 10%", "Up 15%", "Up 20%"])
+        
+        custom_filters = {}
+        if mc != "Any": custom_filters["Market Cap."] = mc
+        if price != "Any": custom_filters["Price"] = price
+        if avg_vol != "Any": custom_filters["Average Volume"] = avg_vol
+        if exch != "Any": custom_filters["Exchange"] = exch
+        if sec != "Any": custom_filters["Sector"] = sec
+        if change != "Any": custom_filters["Change"] = change
+        
+        col_run, col_save, _ = st.columns([2, 3, 5])
+        if col_run.button("🔍 Run Custom Screener", type="primary"):
+            with st.spinner("Running custom screener..."):
+                try:
+                    from finvizfinance.screener.overview import Overview
+                    foverview = Overview()
+                    if custom_filters:
+                        foverview.set_filter(filters_dict=custom_filters)
+                    df = foverview.screener_view(limit=200)
+                    if df is not None and not df.empty:
+                        st.success(f"Found {len(df)} stocks!")
+                        evt_c = st.dataframe(df, on_select="rerun", selection_mode="single-row")
+                        check_dataframe_click(evt_c, df)
+                        st.session_state["all_tickers"].update(df["Ticker"].tolist())
+                    else:
+                        st.warning("No stocks found matching these exact criteria.")
+                except Exception as e:
+                    st.error(f"Error running screener: {e}")
+                    
+        with col_save.popover("💾 Save to Profile"):
+            s_name = st.text_input("Name your screener")
+            if st.button("Save Now"):
+                from tradingagents.ui.auth import save_custom_scanner
+                save_custom_scanner(st.session_state.username, s_name, custom_filters)
+                st.success("Saved successfully!")
+                st.rerun()
+
+    with tab_saved:
+        from tradingagents.ui.auth import get_custom_scanners
+        saved_scanners = get_custom_scanners(st.session_state.username)
+        if not saved_scanners:
+            st.info("You don't have any saved screeners yet. Build one in the other tab!")
+        else:
+            for s in saved_scanners:
+                with st.expander(f"📁 {s['name']} (Created: {s['created_at'][:10]})"):
+                    st.write("**Filters applied:**", s['filters'])
+                    if st.button(f"🚀 Run '{s['name']}'", key=f"run_s_{s['id']}"):
+                        with st.spinner("Running saved screener..."):
+                            try:
+                                from finvizfinance.screener.overview import Overview
+                                foverview = Overview()
+                                if s['filters']:
+                                    foverview.set_filter(filters_dict=s['filters'])
+                                df = foverview.screener_view(limit=200)
+                                if df is not None and not df.empty:
+                                    st.success(f"Found {len(df)} stocks!")
+                                    evt_s = st.dataframe(df, on_select="rerun", selection_mode="single-row")
+                                    check_dataframe_click(evt_s, df)
+                                    st.session_state["all_tickers"].update(df["Ticker"].tolist())
+                                else:
+                                    st.warning("No stocks found matching these criteria today.")
+                            except Exception as e:
+                                st.error(f"Error running screener: {e}")
+
+    st.markdown("---")
     st.subheader("🕵️ Deep Dive & Strategy Setup")
 
     ticker_list = sorted(list(st.session_state.get("all_tickers", ["NVDA"])))
