@@ -212,7 +212,7 @@ def _render_market_scanner() -> None:
         c4, c5, c6 = st.columns(3)
         exch = c4.selectbox("Exchange", ["Any", "AMEX", "NASDAQ", "NYSE"])
         sec = c5.selectbox("Sector", ["Any", "Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"])
-        change = c6.selectbox("Performance (Change)", ["Any", "Down 5%", "Down 10%", "Down 15%", "Down 20%", "Up 5%", "Up 10%", "Up 15%", "Up 20%"])
+        change = c6.selectbox("Performance (Change)", ["Any", "Down >5%", "Down >10%", "Down >15%", "Down >20%", "Up >5%", "Up >10%", "Up >15%", "Up >20%"])
         
         custom_filters = {}
         if mc != "Any": custom_filters["Market Cap."] = mc
@@ -220,7 +220,7 @@ def _render_market_scanner() -> None:
         if avg_vol != "Any": custom_filters["Average Volume"] = avg_vol
         if exch != "Any": custom_filters["Exchange"] = exch
         if sec != "Any": custom_filters["Sector"] = sec
-        if change != "Any": custom_filters["Change"] = change
+        if change != "Any": custom_filters["Change"] = change.replace(">", "")
         
         col_run, col_save, _ = st.columns([2, 3, 5])
         if col_run.button("🔍 Run Custom Screener", type="primary"):
