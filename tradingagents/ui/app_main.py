@@ -277,6 +277,25 @@ def _render_market_scanner() -> None:
                                 st.error(f"Error running screener: {e}")
 
     st.markdown("---")
+    
+    if st.session_state.get("scroll_to_deep_dive"):
+        import streamlit.components.v1 as components
+        components.html(
+            """
+            <script>
+                const elements = window.parent.document.querySelectorAll('h3');
+                for (let el of elements) {
+                    if (el.innerText.includes('Deep Dive & Strategy Setup')) {
+                        el.scrollIntoView({behavior: 'smooth', block: 'start'});
+                        break;
+                    }
+                }
+            </script>
+            """,
+            height=0
+        )
+        st.session_state["scroll_to_deep_dive"] = False
+        
     st.subheader("🕵️ Deep Dive & Strategy Setup")
 
     ticker_list = sorted(list(st.session_state.get("all_tickers", ["NVDA"])))

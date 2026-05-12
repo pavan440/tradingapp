@@ -23,4 +23,5 @@ def check_dataframe_click(event, df) -> None:
         if len(event.selection.rows) > 0:
             idx = event.selection.rows[0]
             st.session_state["target_ticker"] = df.iloc[idx]["Ticker"]
+            st.session_state["scroll_to_deep_dive"] = True
 
