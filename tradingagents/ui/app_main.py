@@ -177,6 +177,7 @@ def _render_market_scanner() -> None:
                     evt5 = st.dataframe(df, on_select="rerun", selection_mode="single-row")
                     check_dataframe_click(evt5, df)
                     st.session_state["scanned_df"] = df
+                    st.session_state["last_scan_label"] = scan_label
                     st.session_state["all_tickers"].update(df["Ticker"].tolist())
                 else:
                     st.warning("No stocks found matching these criteria at the moment.")
@@ -188,6 +189,13 @@ def _render_market_scanner() -> None:
         st.success(f"Found {len(st.session_state['scanned_df'])} stocks matching your criteria!")
         evt6 = st.dataframe(st.session_state["scanned_df"], on_select="rerun", selection_mode="single-row")
         check_dataframe_click(evt6, st.session_state["scanned_df"])
+        
+        if "Earnings" in st.session_state.get("last_scan_label", ""):
+            st.markdown("### 🤖 Agentic Earnings Analyzer")
+            st.write("Automatically analyze the top 5 stocks from this earnings list and categorize them into Bullish or Bearish based on fundamentals and news.")
+            llm_provider_earn = st.selectbox("LLM Provider for Analysis", ["openrouter", "nebius", "openai", "anthropic", "google"], index=0, key="llm_earn")
+            if st.button("🧠 Segregate Earnings (Bullish vs Bearish)", type="primary"):
+                _run_agentic_earnings_analysis(st.session_state["scanned_df"], llm_provider_earn)
 
     st.markdown("---")
     st.subheader("🕵️ Deep Dive & Strategy Setup")
@@ -496,9 +504,16 @@ def _run_deep_dive_reasoning(
 
 {final_prompt_context}
 
-Based strictly on the provided tool outputs, generate a cohesive trading thesis.
-Conclude with a definitive "Final Verdict" (Strong Buy, Buy, Hold, Sell, or Strong Sell).
-Keep your response to 3-4 punchy sentences, plus the final verdict. Format in Markdown.
+Based strictly on the provided tool outputs, generate a comprehensive trading report.
+Your report MUST include:
+1. **Core Thesis:** A 3-4 sentence summary of the fundamentals and technicals.
+2. **Trading Suitability:** Analyze the data and state whether this stock is good for:
+   - Swing Trading (Yes/No & Why)
+   - Momentum Trading (Yes/No & Why)
+   - Short Term Trading (Yes/No & Why)
+   - Long Term Investing (Yes/No & Why)
+3. **Final Verdict:** Conclude with a definitive "Final Verdict" (Strong Buy, Buy, Hold, Sell, or Strong Sell).
+Format your response cleanly in Markdown.
 """
 
     try:
@@ -831,3 +846,61 @@ def _render_reversal_strategy_beta(ticker: str) -> None:
             
     except Exception as e:
         st.warning(f"Reversal module failed: {e}")
+
+def _run_agentic_earnings_analysis(df, provider: str):
+    if not _has_llm_credentials(provider):
+        st.error(_missing_credentials_message(provider))
+        return
+
+    tickers = df["Ticker"].head(5).tolist()
+    if not tickers:
+        st.warning("No tickers to analyze.")
+        return
+
+    st.info(f"Gathering data for {', '.join(tickers)}...")
+    
+    context = ""
+    for tick in tickers:
+        try:
+            from tradingagents.market_data.fundamentals import get_stock_info
+            info = get_stock_info(tick)
+            context += f"TICKER: {tick}\n"
+            context += f"Sector: {info.get('sector', 'N/A')} | Market Cap: {info.get('marketCap', 'N/A')}\n"
+            context += f"Forward PE: {info.get('forwardPE', 'N/A')} | Current Price: {info.get('currentPrice', 'N/A')}\n"
+            
+            import urllib.request
+            import xml.etree.ElementTree as ET
+            url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={tick}&region=US&lang=en-US"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            xml_data = urllib.request.urlopen(req, timeout=3).read()
+            root = ET.fromstring(xml_data)
+            news_lines = []
+            for item in root.findall('.//item')[:3]:
+                title = item.find('title').text if item.find('title') is not None else ""
+                if title: news_lines.append(f"- {title}")
+            context += "RECENT NEWS:\n" + "\n".join(news_lines) + "\n\n"
+        except Exception:
+            context += f"TICKER: {tick}\nData temporarily unavailable.\n\n"
+            
+    prompt = f"""You are an expert earnings analyst AI. Review the fundamental data and latest news for the following companies reporting earnings:
+    
+{context}
+
+Your task is to segregate these stocks into two clear categories:
+1. 🟢 BULLISH (Strong fundamentals, positive news sentiment)
+2. 🔴 BEARISH (Weak fundamentals, negative news sentiment or overvalued)
+
+Give a 1-sentence reason for each stock's categorization based strictly on the provided data.
+Format your output cleanly in Markdown.
+"""
+    with st.spinner("🧠 AI is analyzing earnings data and segregating stocks..."):
+        try:
+            from tradingagents.llm_clients import create_llm_client
+            # Basic model selection for the agent
+            model_name = "z-ai/glm-4.5-air:free" if provider == "openrouter" else ""
+            client = create_llm_client(provider, model_name)
+            res = client.get_llm().invoke(prompt)
+            st.markdown("### 📊 Agentic Earnings Report")
+            st.success(res.content)
+        except Exception as e:
+            st.error(f"Analysis failed: {e}")
