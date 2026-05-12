@@ -231,15 +231,19 @@ def _render_market_scanner() -> None:
                     if custom_filters:
                         foverview.set_filter(filters_dict=custom_filters)
                     df = foverview.screener_view(limit=200)
-                    if df is not None and not df.empty:
-                        st.success(f"Found {len(df)} stocks!")
-                        evt_c = st.dataframe(df, on_select="rerun", selection_mode="single-row")
-                        check_dataframe_click(evt_c, df)
-                        st.session_state["all_tickers"].update(df["Ticker"].tolist())
-                    else:
-                        st.warning("No stocks found matching these exact criteria.")
+                    st.session_state["custom_builder_df"] = df
                 except Exception as e:
                     st.error(f"Error running screener: {e}")
+                    
+        if "custom_builder_df" in st.session_state and st.session_state["custom_builder_df"] is not None:
+            df = st.session_state["custom_builder_df"]
+            if not df.empty:
+                st.success(f"Found {len(df)} stocks!")
+                evt_c = st.dataframe(df, on_select="rerun", selection_mode="single-row")
+                check_dataframe_click(evt_c, df)
+                st.session_state["all_tickers"].update(df["Ticker"].tolist())
+            else:
+                st.warning("No stocks found matching these exact criteria.")
                     
         with col_save.popover("💾 Save to Profile"):
             s_name = st.text_input("Name your screener")
@@ -266,15 +270,19 @@ def _render_market_scanner() -> None:
                                 if s['filters']:
                                     foverview.set_filter(filters_dict=s['filters'])
                                 df = foverview.screener_view(limit=200)
-                                if df is not None and not df.empty:
-                                    st.success(f"Found {len(df)} stocks!")
-                                    evt_s = st.dataframe(df, on_select="rerun", selection_mode="single-row")
-                                    check_dataframe_click(evt_s, df)
-                                    st.session_state["all_tickers"].update(df["Ticker"].tolist())
-                                else:
-                                    st.warning("No stocks found matching these criteria today.")
+                                st.session_state[f"saved_screener_df_{s['id']}"] = df
                             except Exception as e:
                                 st.error(f"Error running screener: {e}")
+                                
+                    if f"saved_screener_df_{s['id']}" in st.session_state and st.session_state[f"saved_screener_df_{s['id']}"] is not None:
+                        df = st.session_state[f"saved_screener_df_{s['id']}"]
+                        if not df.empty:
+                            st.success(f"Found {len(df)} stocks!")
+                            evt_s = st.dataframe(df, on_select="rerun", selection_mode="single-row")
+                            check_dataframe_click(evt_s, df)
+                            st.session_state["all_tickers"].update(df["Ticker"].tolist())
+                        else:
+                            st.warning("No stocks found matching these criteria today.")
 
     st.markdown("---")
     
@@ -610,7 +618,8 @@ Your report MUST include:
    - Momentum Trading (Yes/No & Why)
    - Short Term Trading (Yes/No & Why)
    - Long Term Investing (Yes/No & Why)
-3. **Final Verdict:** Conclude with a definitive "Final Verdict" (Strong Buy, Buy, Hold, Sell, or Strong Sell).
+3. **Price Projection:** Based on the current price and momentum, estimate a realistic price projection. (e.g., "If bullish, it could push to resistance at $X. If bearish, it could drop to support at $Y.")
+4. **Final Verdict:** Conclude with a definitive "Final Verdict" (Strong Buy, Buy, Hold, Sell, or Strong Sell).
 Format your response cleanly in Markdown.
 """
 
