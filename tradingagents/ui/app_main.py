@@ -325,8 +325,14 @@ def _render_market_scanner() -> None:
     st.session_state["target_ticker"] = selected_ticker
     with st.spinner(f"Fetching quick snapshot for {selected_ticker}..."):
         try:
+            import yfinance as yf
+            st.markdown(f"### 📈 6-Month Price Action for {selected_ticker}")
+            hist_chart = yf.Ticker(selected_ticker).history(period="6mo")
+            if not hist_chart.empty:
+                st.line_chart(hist_chart["Close"])
+                
             info = get_stock_info(selected_ticker)
-            st.markdown(f"**Quick Fundamental & Technical Snapshot for {selected_ticker}**")
+            st.markdown(f"**Quick Fundamental Snapshot for {selected_ticker}**")
             
             # Sector and Industry
             sector = info.get('sector', 'N/A')
@@ -340,7 +346,14 @@ def _render_market_scanner() -> None:
             cap_str = f"${market_cap/1e9:.2f}B" if market_cap > 1e9 else f"${market_cap/1e6:.2f}M"
             col2.metric("Market Cap", cap_str)
             col3.metric("P/E Ratio", info.get("trailingPE", "N/A"))
-            col4.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 'N/A')}")
+            
+            earn_ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
+            if earn_ts:
+                import datetime
+                earn_dt = datetime.datetime.fromtimestamp(earn_ts).strftime('%Y-%m-%d')
+                col4.metric("Next Earnings", earn_dt)
+            else:
+                col4.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 'N/A')}")
         except Exception as e:
             st.error(f"Could not load data for {selected_ticker}. Error: {e}")
 
@@ -975,6 +988,14 @@ def _run_agentic_earnings_analysis(df, provider: str):
             context += f"Sector: {info.get('sector', 'N/A')} | Market Cap: {info.get('marketCap', 'N/A')}\n"
             context += f"Forward PE: {info.get('forwardPE', 'N/A')} | Current Price: {info.get('currentPrice', 'N/A')}\n"
             
+            earn_ts = info.get('earningsTimestamp') or info.get('earningsTimestampStart')
+            if earn_ts:
+                import datetime
+                earn_dt = datetime.datetime.fromtimestamp(earn_ts).strftime('%Y-%m-%d')
+                context += f"Next Expected Earnings Date: {earn_dt}\n"
+            else:
+                context += "Next Expected Earnings Date: Unknown\n"
+            
             import urllib.request
             import xml.etree.ElementTree as ET
             url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={tick}&region=US&lang=en-US"
@@ -997,7 +1018,10 @@ Your task is to segregate these stocks into two clear categories:
 1. 🟢 BULLISH (Strong fundamentals, positive news sentiment)
 2. 🔴 BEARISH (Weak fundamentals, negative news sentiment or overvalued)
 
-Give a 1-sentence reason for each stock's categorization based strictly on the provided data.
+For each stock, provide a bullet point that states:
+- **Date:** [Exact Earnings Date if provided, else Unknown]
+- **Reason:** [1-sentence reason for categorization]
+
 Format your output cleanly in Markdown.
 """
     with st.spinner("🧠 AI is analyzing earnings data and segregating stocks..."):
