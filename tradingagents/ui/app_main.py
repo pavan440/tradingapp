@@ -212,7 +212,7 @@ def _render_market_scanner() -> None:
         c4, c5, c6 = st.columns(3)
         exch = c4.selectbox("Exchange", ["Any", "AMEX", "NASDAQ", "NYSE"])
         sec = c5.selectbox("Sector", ["Any", "Basic Materials", "Communication Services", "Consumer Cyclical", "Consumer Defensive", "Energy", "Financial", "Healthcare", "Industrials", "Real Estate", "Technology", "Utilities"])
-        change = c6.selectbox("Performance (Change)", ["Any", "Down >5%", "Down >10%", "Down >15%", "Down >20%", "Up >5%", "Up >10%", "Up >15%", "Up >20%"])
+        change = c6.selectbox("Performance (Change)", ["Any", "Down 5%", "Down 10%", "Down 15%", "Down >20%", "Up 5%", "Up 10%", "Up 15%", "Up >20%"])
         
         custom_filters = {}
         if mc != "Any": custom_filters["Market Cap."] = mc
